@@ -1,0 +1,52 @@
+{
+  "name": "lead-generation-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d --wait && npx drizzle-kit migrate",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:verify": "npx tsx scripts/verify-db-connections.ts",
+    "db:setup": "npm run db:up && npx drizzle-kit generate && npx drizzle-kit migrate && npm run db:verify",
+    "db:studio": "drizzle-kit studio",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^4.28.x",
+    "@fastify/cookie": "^9.x",
+    "@fastify/rate-limit": "^9.x",
+    "argon2": "^0.x",
+    "nodemailer": "^6.x",
+    "ioredis": "^5.x",
+    "drizzle-orm": "^0.33.x",
+    "postgres": "^3.x",
+    "zod": "^3.x",
+    "tsx": "^4.x"
+  },
+  "devDependencies": {
+    "typescript": "^5.x",
+    "vitest": "^2.x",
+    "@vitest/coverage-v8": "^2.x",
+    "testcontainers": "^10.x",
+    "playwright": "^1.x",
+    "@playwright/test": "^1.x",
+    "@types/node": "^20.x",
+    "@types/nodemailer": "^6.x",
+    "smtp-server": "^3.x",
+    "@types/smtp-server": "^3.x",
+    "drizzle-kit": "^0.24.x"
+  }
+}
