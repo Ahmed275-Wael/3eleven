@@ -1,0 +1,423 @@
+{
+  "info": {
+    "name": "Lead Generation — Security Module",
+    "description": "All auth endpoints for the security module. Run requests in order for a full happy-path flow. The base URL variable `baseUrl` defaults to http://localhost:3000.\n\nHappy-path order:\n1. Register\n2. (Check Mailtrap sandbox for code OR use the Redis tip)\n3. Verify Email  → cookie is auto-saved\n4. Login         → cookie is auto-saved\n5. Logout\n6. Forgot Password\n7. Reset Password",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "userEmail",
+      "value": "testuser@example.com",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "testuser",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "SecurePass123!",
+      "type": "string"
+    },
+    {
+      "key": "verifyCode",
+      "value": "",
+      "type": "string",
+      "description": "Paste the 6-digit code from your Mailtrap inbox here before running Verify Email"
+    },
+    {
+      "key": "resetCode",
+      "value": "",
+      "type": "string",
+      "description": "Paste the 6-digit reset code from your Mailtrap inbox here before running Reset Password"
+    },
+    {
+      "key": "sessionCookie",
+      "value": "",
+      "type": "string",
+      "description": "Auto-populated by the Login/Verify post-response scripts"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 — Register",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.test('Returns userId', () => {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.userId).to.be.a('string');",
+              "    pm.expect(body.username).to.be.a('string');",
+              "    pm.collectionVariables.set('username', body.username);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "register"]
+        },
+        "description": "Creates a new user account. A 6-digit verification code is sent to the provided email via SMTP (check Mailtrap sandbox inbox at https://mailtrap.io). Copy the code into the `verifyCode` collection variable before running request #3."
+      },
+      "response": [
+        {
+          "name": "201 Created",
+          "status": "Created",
+          "code": 201,
+          "originalRequest": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"testuser@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register" }
+          },
+          "body": "{\n  \"userId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"username\": \"testuser\",\n  \"message\": \"Verification code sent to your email\"\n}"
+        },
+        {
+          "name": "409 Username Taken",
+          "status": "Conflict",
+          "code": 409,
+          "body": "{\n  \"error\": \"USERNAME_TAKEN\",\n  \"message\": \"Username is already taken\"\n}"
+        },
+        {
+          "name": "409 Email Taken",
+          "status": "Conflict",
+          "code": 409,
+          "body": "{\n  \"error\": \"EMAIL_TAKEN\",\n  \"message\": \"Email is already registered\"\n}"
+        },
+        {
+          "name": "400 Validation Error",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"VALIDATION_ERROR\",\n  \"message\": \"...\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "2 — Resend Verification Email",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{userEmail}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/resend-verification",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "resend-verification"]
+        },
+        "description": "Generates a fresh 6-digit code and re-sends the verification email. Use this if the original code expired (15-minute TTL) or was lost. Check Mailtrap inbox again for the new code."
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"message\": \"Verification code resent\"\n}"
+        },
+        {
+          "name": "400 Already Verified",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"ALREADY_VERIFIED\",\n  \"message\": \"Email is already verified\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "3 — Verify Email",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "// Auto-save the session cookie for subsequent requests",
+              "const cookieHeader = pm.response.headers.get('Set-Cookie');",
+              "if (cookieHeader) {",
+              "    const match = cookieHeader.match(/__session=([^;]+)/);",
+              "    if (match) pm.collectionVariables.set('sessionCookie', match[1]);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"code\": \"{{verifyCode}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/verify-email",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "verify-email"]
+        },
+        "description": "Submits the 6-digit code from the verification email. On success, sets the `__session` HttpOnly cookie (auto-captured by the test script into `sessionCookie` variable) and marks the account as verified.\n\nBefore running: paste the code from Mailtrap into the `verifyCode` collection variable."
+      },
+      "response": [
+        {
+          "name": "200 OK + Set-Cookie",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            { "key": "Set-Cookie", "value": "__session=<sessionId>; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800" }
+          ],
+          "body": "{\n  \"message\": \"Email verified\"\n}"
+        },
+        {
+          "name": "400 Invalid Code",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"INVALID_CODE\",\n  \"message\": \"Invalid or expired verification code\"\n}"
+        },
+        {
+          "name": "400 Already Verified",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"ALREADY_VERIFIED\",\n  \"message\": \"Email is already verified\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "4 — Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const cookieHeader = pm.response.headers.get('Set-Cookie');",
+              "if (cookieHeader) {",
+              "    const match = cookieHeader.match(/__session=([^;]+)/);",
+              "    if (match) pm.collectionVariables.set('sessionCookie', match[1]);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "description": "Authenticates with username + password. On success, sets the `__session` cookie. Username lookup is case-insensitive (TestUser = testuser = TESTUSER).\n\nRate limited: 5 attempts per minute per IP."
+      },
+      "response": [
+        {
+          "name": "200 OK + Set-Cookie",
+          "status": "OK",
+          "code": 200,
+          "header": [
+            { "key": "Set-Cookie", "value": "__session=<sessionId>; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800" }
+          ],
+          "body": "{\n  \"message\": \"Logged in\"\n}"
+        },
+        {
+          "name": "401 Invalid Credentials",
+          "status": "Unauthorized",
+          "code": 401,
+          "body": "{\n  \"error\": \"INVALID_CREDENTIALS\",\n  \"message\": \"Invalid username or password\"\n}"
+        },
+        {
+          "name": "403 Email Not Verified",
+          "status": "Forbidden",
+          "code": 403,
+          "body": "{\n  \"error\": \"EMAIL_NOT_VERIFIED\",\n  \"message\": \"Please verify your email before logging in\"\n}"
+        },
+        {
+          "name": "429 Rate Limited",
+          "status": "Too Many Requests",
+          "code": 429,
+          "body": "{\n  \"error\": \"Too Many Requests\",\n  \"message\": \"Rate limit exceeded, retry in 60 seconds\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "5 — Logout",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('sessionCookie', '');"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Cookie", "value": "__session={{sessionCookie}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/logout",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "logout"]
+        },
+        "description": "Destroys the server-side session in Redis and clears the `__session` cookie. Idempotent — returns 200 even if no cookie is present."
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"message\": \"Logged out\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "6 — Forgot Password",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200 (always — no email enumeration)', () => pm.response.to.have.status(200));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{userEmail}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/forgot-password",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "forgot-password"]
+        },
+        "description": "Requests a password reset. Always returns 200 regardless of whether the email exists (prevents user enumeration). If the email is registered, a 6-digit reset code is sent (check Mailtrap inbox). Copy the code into the `resetCode` collection variable.\n\nRate limited: 3 requests per hour per IP."
+      },
+      "response": [
+        {
+          "name": "200 OK (always)",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"message\": \"If the email exists, a reset code has been sent\"\n}"
+        },
+        {
+          "name": "400 Missing Email",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"VALIDATION_ERROR\",\n  \"message\": \"...\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "7 — Reset Password",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "// Update the password variable so subsequent login requests use the new one",
+              "pm.collectionVariables.set('password', pm.request.body.raw ? JSON.parse(pm.request.body.raw).newPassword : pm.collectionVariables.get('password'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"code\": \"{{resetCode}}\",\n  \"newPassword\": \"NewSecurePass456!\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/reset-password",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "reset-password"]
+        },
+        "description": "Submits the 6-digit reset code from the Forgot Password email along with the new password. The code is single-use and expires after 1 hour. All existing sessions for the user are invalidated on success.\n\nBefore running: paste the code from Mailtrap into the `resetCode` collection variable."
+      },
+      "response": [
+        {
+          "name": "200 OK",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"message\": \"Password reset successful\"\n}"
+        },
+        {
+          "name": "400 Invalid/Expired Code",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"INVALID_CODE\",\n  \"message\": \"Invalid or expired reset code\"\n}"
+        },
+        {
+          "name": "400 Weak Password",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"VALIDATION_ERROR\",\n  \"message\": \"Password must be at least 8 characters\"\n}"
+        }
+      ]
+    }
+  ]
+}

@@ -37,6 +37,11 @@ const forgotPasswordSchema = z.object({
   email: z.string().email(),
 });
 
+const verifyResetCodeSchema = z.object({
+  email: z.string().email(),
+  code: z.string().length(6),
+});
+
 const resetPasswordSchema = z.object({
   email: z.string().email(),
   code: z.string().length(6),
@@ -44,26 +49,32 @@ const resetPasswordSchema = z.object({
 });
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  // Register rate limiting plugin (in-memory by default, per-route opt-in)
-  await app.register(rateLimit, {
-    global: false,
-    max: 10,
-    timeWindow: '1 minute',
-    keyGenerator: (request) => {
-      return request.headers['x-forwarded-for'] as string || request.ip;
-    },
-  });
-
+  // Register rate limiting plugin (Redis-backed when available, per-route opt-in)
   // Retrieve pre-configured services from app decorators
   const usersRepo = (app as any).usersRepo;
   const redis = (app as any).redis;
+
+  // Register rate limiting plugin (Redis-backed when available, per-route opt-in)
+  const rateLimitOpts: Record<string, unknown> = {
+    global: false,
+    max: 10,
+    timeWindow: '1 minute',
+    keyGenerator: (request: { headers: Record<string, unknown>; ip: string }) => {
+      return request.headers['x-forwarded-for'] as string || request.ip;
+    },
+  };
+  if (redis) {
+    rateLimitOpts.redis = redis;
+  }
+  await app.register(rateLimit, rateLimitOpts);
   const sessionService: SessionService = (app as any).sessionService ?? new SessionService(redis);
   const emailSender = (app as any).emailSender ?? { sendVerificationCode: async () => {} };
   const resetEmailSender = (app as any).resetEmailSender ?? { sendResetCode: async () => {} };
 
   const registrationService = new RegistrationService(usersRepo, redis, emailSender);
-  const emailVerificationService = new EmailVerificationService(usersRepo, redis, sessionService);
-  const loginService = new LoginService(usersRepo, sessionService);
+  const emailVerificationService = new EmailVerificationService(usersRepo, redis, sessionService, emailSender);
+  const eventsRepo = (app as any).eventsRepo;
+  const loginService = new LoginService(usersRepo, sessionService, eventsRepo);
   const passwordResetService = new PasswordResetService(usersRepo, redis, sessionService, resetEmailSender);
 
   setSessionServiceForAuth(sessionService);
@@ -77,6 +88,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
     }
     if (error.validation) {
+      return reply.status(400).send({
+        error: 'VALIDATION_ERROR',
+        message: error.message,
+      });
+    }
+    // Handle Zod validation errors
+    if (error.name === 'ZodError' || (error as any).issues) {
       return reply.status(400).send({
         error: 'VALIDATION_ERROR',
         message: error.message,
@@ -125,20 +143,28 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const body = loginSchema.parse(request.body);
-    const sessionId = await loginService.login(body);
+    const ip = (request.headers['x-forwarded-for'] as string)?.split(',')[0].trim()
+      || request.ip
+      || '0.0.0.0';
+    const userAgent = request.headers['user-agent'];
+    const sessionId = await loginService.login({ ...body, ip, userAgent });
     setSessionCookie(reply, sessionId);
     return reply.status(200).send({ message: 'Logged in' });
   });
 
   // POST /auth/logout
   app.post('/auth/logout', async (request, reply) => {
-    const cookieName = process.env.SESSION_COOKIE_NAME || 'sid';
+    const cookieName = process.env.SESSION_COOKIE_NAME || '__session';
     const sessionId = request.cookies?.[cookieName];
-    if (sessionId) {
-      await sessionService.destroySession(sessionId);
-    }
     clearSessionCookie(reply);
-    return reply.status(200).send({ message: 'Logged out' });
+    if (!sessionId) {
+      return reply.status(200).send({ loggedOut: false, message: 'No active session' });
+    }
+    const destroyed = await sessionService.destroySession(sessionId);
+    if (destroyed) {
+      return reply.status(200).send({ loggedOut: true, message: 'Logged out successfully' });
+    }
+    return reply.status(200).send({ loggedOut: false, message: 'Session already expired' });
   });
 
   // POST /auth/forgot-password
@@ -148,6 +174,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = forgotPasswordSchema.parse(request.body);
     await passwordResetService.requestReset(body.email);
     return reply.status(200).send({ message: 'If the email exists, a reset code has been sent' });
+  });
+
+  // POST /auth/verify-reset-code  (Step 2 — validate code without consuming it)
+  app.post('/auth/verify-reset-code', async (request, reply) => {
+    const body = verifyResetCodeSchema.parse(request.body);
+    await passwordResetService.verifyResetCode(body.email, body.code);
+    return reply.status(200).send({ valid: true, message: 'Code is valid' });
   });
 
   // POST /auth/reset-password

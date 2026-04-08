@@ -3,7 +3,7 @@
 import type Redis from 'ioredis';
 import type { UsersRepository } from '../users/users.repository.js';
 import type { SessionService } from '../session/session.service.js';
-import { generateResetCode, consumeResetCode } from '../crypto/reset-code.js';
+import { generateResetCode, peekResetCode, consumeResetCode } from '../crypto/reset-code.js';
 import { hashPassword } from '../crypto/argon2.js';
 import { InvalidResetCodeError, ValidationError } from '../errors/index.js';
 
@@ -25,6 +25,11 @@ export class PasswordResetService {
 
     const code = await generateResetCode(this.redis, email);
     await this.emailSender.sendResetCode(email, code);
+  }
+
+  async verifyResetCode(email: string, code: string): Promise<void> {
+    const valid = await peekResetCode(this.redis, email, code);
+    if (!valid) throw new InvalidResetCodeError();
   }
 
   async resetPassword(email: string, code: string, newPassword: string): Promise<void> {

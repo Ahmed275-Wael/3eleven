@@ -3,6 +3,7 @@
 import type Redis from 'ioredis';
 import type { UsersRepository } from '../users/users.repository.js';
 import type { SessionService } from '../session/session.service.js';
+import type { EmailSender } from './registration.service.js';
 import { consumeCode, generateCode } from '../crypto/verification-code.js';
 import {
   InvalidVerificationCodeError,
@@ -20,6 +21,7 @@ export class EmailVerificationService {
     private readonly usersRepo: UsersRepository,
     private readonly redis: Redis,
     private readonly sessionService: SessionService,
+    private readonly emailSender: EmailSender,
   ) {}
 
   async verifyEmail(input: VerifyEmailInput): Promise<string> {
@@ -46,6 +48,11 @@ export class EmailVerificationService {
     if (!user) throw new UserNotFoundError();
     if (user.emailVerified) throw new AlreadyVerifiedError();
 
-    await generateCode(this.redis, email);
+    const code = await generateCode(this.redis, email);
+    try {
+      await this.emailSender.sendVerificationCode(email, code);
+    } catch {
+      // best-effort — code is already stored in Redis
+    }
   }
 }

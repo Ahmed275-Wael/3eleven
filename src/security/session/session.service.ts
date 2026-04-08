@@ -35,8 +35,9 @@ export class SessionService {
     return JSON.parse(data) as SessionPayload;
   }
 
-  async destroySession(id: string): Promise<void> {
-    await this.redis.del(`${SESSION_PREFIX}${id}`);
+  async destroySession(id: string): Promise<boolean> {
+    const deleted = await this.redis.del(`${SESSION_PREFIX}${id}`);
+    return deleted > 0;
   }
 
   async rotateSession(id: string): Promise<string> {

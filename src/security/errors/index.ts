@@ -96,3 +96,10 @@ export class MissingPepperError extends SecurityError {
     super('PEPPER env var is not set', 'MISSING_PEPPER', 500);
   }
 }
+
+// ─── Risk ───
+export class HighRiskLoginError extends SecurityError {
+  constructor() {
+    super('Login blocked due to high-risk activity', 'HIGH_RISK_LOGIN', 403);
+  }
+}

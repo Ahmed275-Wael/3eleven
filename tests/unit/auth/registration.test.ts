@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import { authRoutes } from '../../../src/security/routes/auth.routes.js';
 import { RegistrationService, type RegisterInput } from '../../../src/security/auth/registration.service';
 import { DuplicateUsernameError, DuplicateEmailError, ValidationError } from '../../../src/security/errors';
 
@@ -149,10 +152,84 @@ describe('MODULE 4.1 — Registration Service', () => {
 // MODULE 4.1 — Registration Route
 // ---------------------------------------------------------------------------
 describe('MODULE 4.1 — Registration Route', () => {
-  // Route tests use Fastify inject() — will fail until routes are implemented
-  it.todo('POST /auth/register → 201 { userId, username, message }');
-  it.todo('POST /auth/register → duplicate username → 409 USERNAME_TAKEN');
-  it.todo('POST /auth/register → duplicate email → 409 EMAIL_TAKEN');
-  it.todo('POST /auth/register → invalid body → 400 VALIDATION_ERROR');
-  it.todo('POST /auth/register → does NOT return passwordHash');
+  let app: ReturnType<typeof Fastify>;
+  let routeUsersRepo: ReturnType<typeof createMockUsersRepo>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    routeUsersRepo = createMockUsersRepo();
+    app = Fastify();
+    await app.register(cookie);
+    app.decorate('usersRepo', routeUsersRepo);
+    app.decorate('emailSender', createMockEmailSender());
+    app.decorate('resetEmailSender', { sendResetCode: vi.fn().mockResolvedValue(undefined) });
+    app.decorate('sessionService', {
+      createSession: vi.fn().mockResolvedValue('session-id'),
+      destroySession: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      rotateSession: vi.fn(),
+    });
+    app.decorate('eventsRepo', {
+      logEvent: vi.fn().mockResolvedValue({ id: 'e1' }),
+      getRecentEvents: vi.fn().mockResolvedValue([]),
+    });
+    await app.register(authRoutes);
+    await app.ready();
+  });
+
+  afterEach(async () => app.close());
+
+  it('POST /auth/register → 201 { userId, username, message }', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'testuser', email: 'test@example.com', password: 'securePass1!' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.userId).toBeDefined();
+    expect(body.username).toBeDefined();
+    expect(body.message).toBeDefined();
+  });
+
+  it('POST /auth/register → duplicate username → 409 USERNAME_TAKEN', async () => {
+    routeUsersRepo.findByUsername.mockResolvedValueOnce({ id: 'existing-user' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'testuser', email: 'test@example.com', password: 'securePass1!' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('USERNAME_TAKEN');
+  });
+
+  it('POST /auth/register → duplicate email → 409 EMAIL_TAKEN', async () => {
+    routeUsersRepo.findByEmail.mockResolvedValueOnce({ id: 'existing-user' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'newuser', email: 'test@example.com', password: 'securePass1!' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('EMAIL_TAKEN');
+  });
+
+  it('POST /auth/register → invalid body → 400 VALIDATION_ERROR', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'ab', email: 'not-an-email', password: '123' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /auth/register → does NOT return passwordHash', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { username: 'testuser', email: 'test@example.com', password: 'securePass1!' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().passwordHash).toBeUndefined();
+  });
 });

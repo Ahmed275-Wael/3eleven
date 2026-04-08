@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
+import cookie from '@fastify/cookie';
 import { setupTestRedis, type TestRedis } from '../helpers/test-redis';
 import { authRoutes } from '../../src/security/routes/auth.routes';
 
@@ -13,13 +14,27 @@ describe('MODULE 7 — Rate Limiting (Integration)', () => {
     testRedis = await setupTestRedis();
 
     app = Fastify();
-    // Register routes (will fail until implemented — correct TDD)
-    try {
-      await app.register(authRoutes);
-      await app.ready();
-    } catch {
-      // Routes not yet implemented — expected in TDD
-    }
+    await app.register(cookie);
+
+    // Minimal mock decorators so authRoutes can initialise
+    const noop = () => {};
+    app.decorate('redis', testRedis.redis);
+    app.decorate('usersRepo', {
+      findByUsername: async () => null,
+      findByEmail: async () => null,
+      create: async () => ({ id: 'fake', username: 'u', email: 'e@e.com', emailVerified: false, createdAt: new Date(), updatedAt: new Date() }),
+    });
+    app.decorate('sessionService', {
+      createSession: async () => 'fake-session',
+      getSession: async () => null,
+      destroySession: async () => {},
+      destroyAllSessions: async () => {},
+    });
+    app.decorate('emailSender', { sendVerificationCode: async () => {} });
+    app.decorate('resetEmailSender', { sendResetCode: async () => {} });
+
+    await app.register(authRoutes);
+    await app.ready();
   }, 60_000);
 
   afterAll(async () => {
@@ -168,7 +183,7 @@ describe('MODULE 7 — Rate Limiting (Integration)', () => {
     });
 
     // Check Redis for rate limit keys
-    const keys = await testRedis.redis.keys('*ratelimit*');
+    const keys = await testRedis.redis.keys('*rate-limit*');
     // At least one rate limit key should exist
     expect(keys.length).toBeGreaterThan(0);
   });

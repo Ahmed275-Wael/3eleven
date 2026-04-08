@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import { authRoutes } from '../../../src/security/routes/auth.routes.js';
 import { PasswordResetService } from '../../../src/security/auth/password-reset.service';
 import {
   InvalidResetCodeError,
@@ -10,12 +13,13 @@ import {
 // ---------------------------------------------------------------------------
 vi.mock('../../../src/security/crypto/reset-code', () => ({
   generateResetCode: vi.fn().mockResolvedValue('987654'),
+  peekResetCode: vi.fn().mockResolvedValue(true),
   consumeResetCode: vi.fn().mockResolvedValue(true),
 }));
 vi.mock('../../../src/security/crypto/argon2', () => ({
   hashPassword: vi.fn().mockResolvedValue('$argon2id$new-hash'),
 }));
-import { generateResetCode, consumeResetCode } from '../../../src/security/crypto/reset-code';
+import { generateResetCode, peekResetCode, consumeResetCode } from '../../../src/security/crypto/reset-code';
 import { hashPassword } from '../../../src/security/crypto/argon2';
 
 function createMockUsersRepo() {
@@ -123,9 +127,109 @@ describe('MODULE 5.1 — requestReset()', () => {
 // MODULE 5.1 — Forgot Password Route
 // ---------------------------------------------------------------------------
 describe('MODULE 5.1 — Forgot Password Route', () => {
-  it.todo('POST /auth/forgot-password → { email } → always 200');
-  it.todo('POST /auth/forgot-password → rate limited → 429 RATE_LIMITED');
-  it.todo('POST /auth/forgot-password → missing email → 400');
+  let app: ReturnType<typeof Fastify>;
+  let routeUsersRepo: ReturnType<typeof createMockUsersRepo>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    routeUsersRepo = createMockUsersRepo();
+    app = Fastify();
+    await app.register(cookie);
+    app.decorate('usersRepo', routeUsersRepo);
+    app.decorate('emailSender', { sendVerificationCode: vi.fn().mockResolvedValue(undefined) });
+    app.decorate('resetEmailSender', createMockEmailSender());
+    app.decorate('sessionService', createMockSessionService());
+    app.decorate('eventsRepo', {
+      logEvent: vi.fn().mockResolvedValue({ id: 'e1' }),
+      getRecentEvents: vi.fn().mockResolvedValue([]),
+    });
+    await app.register(authRoutes);
+    await app.ready();
+  });
+
+  afterEach(async () => app.close());
+
+  it('POST /auth/forgot-password → { email } → always 200', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: { email: 'user@test.com' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('POST /auth/forgot-password → rate limited → 429 RATE_LIMITED', async () => {
+    // Exhaust the 3-request limit (max: 3, timeWindow: 1 hour)
+    for (let i = 0; i < 3; i++) {
+      await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'user@test.com' },
+      });
+    }
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: { email: 'user@test.com' },
+    });
+    expect(res.statusCode).toBe(429);
+  });
+
+  it('POST /auth/forgot-password → missing email → 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/forgot-password',
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MODULE 5.1b — verifyResetCode()
+// ---------------------------------------------------------------------------
+describe('MODULE 5.1b — verifyResetCode()', () => {
+  let service: PasswordResetService;
+  let usersRepo: ReturnType<typeof createMockUsersRepo>;
+  let redis: ReturnType<typeof createMockRedis>;
+  let sessionService: ReturnType<typeof createMockSessionService>;
+  let emailSender: ReturnType<typeof createMockEmailSender>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    usersRepo = createMockUsersRepo();
+    redis = createMockRedis();
+    sessionService = createMockSessionService();
+    emailSender = createMockEmailSender();
+    service = new PasswordResetService(
+      usersRepo as any,
+      redis as any,
+      sessionService as any,
+      emailSender,
+    );
+  });
+
+  it('valid code → resolves without error (code is NOT consumed)', async () => {
+    vi.mocked(peekResetCode).mockResolvedValueOnce(true);
+    await expect(service.verifyResetCode('user@test.com', '987654')).resolves.toBeUndefined();
+    expect(peekResetCode).toHaveBeenCalledWith(redis, 'user@test.com', '987654');
+    expect(consumeResetCode).not.toHaveBeenCalled();
+  });
+
+  it('wrong code → throws InvalidResetCodeError', async () => {
+    vi.mocked(peekResetCode).mockResolvedValueOnce(false);
+    await expect(service.verifyResetCode('user@test.com', '000000')).rejects.toThrow(InvalidResetCodeError);
+  });
+
+  it('expired code → throws InvalidResetCodeError', async () => {
+    vi.mocked(peekResetCode).mockResolvedValueOnce(false);
+    await expect(service.verifyResetCode('user@test.com', '987654')).rejects.toThrow(InvalidResetCodeError);
+  });
+
+  it('does not reveal whether email exists (same error for unknown email)', async () => {
+    vi.mocked(peekResetCode).mockResolvedValueOnce(false);
+    await expect(service.verifyResetCode('noone@test.com', '123456')).rejects.toThrow(InvalidResetCodeError);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -201,7 +305,55 @@ describe('MODULE 5.2 — resetPassword()', () => {
 // MODULE 5.2 — Reset Password Route
 // ---------------------------------------------------------------------------
 describe('MODULE 5.2 — Reset Password Route', () => {
-  it.todo('POST /auth/reset-password → { email, code, newPassword } → 200');
-  it.todo('POST /auth/reset-password → invalid/expired code → 400 INVALID_CODE');
-  it.todo('POST /auth/reset-password → weak password → 400 VALIDATION_ERROR');
+  let app: ReturnType<typeof Fastify>;
+  let routeUsersRepo: ReturnType<typeof createMockUsersRepo>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    routeUsersRepo = createMockUsersRepo();
+    app = Fastify();
+    await app.register(cookie);
+    app.decorate('usersRepo', routeUsersRepo);
+    app.decorate('redis', { ...createMockRedis(), defineCommand: vi.fn() });
+    app.decorate('emailSender', { sendVerificationCode: vi.fn().mockResolvedValue(undefined) });
+    app.decorate('resetEmailSender', createMockEmailSender());
+    app.decorate('sessionService', createMockSessionService());
+    app.decorate('eventsRepo', {
+      logEvent: vi.fn().mockResolvedValue({ id: 'e1' }),
+      getRecentEvents: vi.fn().mockResolvedValue([]),
+    });
+    await app.register(authRoutes);
+    await app.ready();
+  });
+
+  afterEach(async () => app.close());
+
+  it('POST /auth/reset-password → { email, code, newPassword } → 200', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/reset-password',
+      payload: { email: 'user@test.com', code: '987654', newPassword: 'NewSecure1!' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('POST /auth/reset-password → invalid/expired code → 400 INVALID_CODE', async () => {
+    vi.mocked(consumeResetCode).mockResolvedValueOnce(false);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/reset-password',
+      payload: { email: 'user@test.com', code: '000000', newPassword: 'NewSecure1!' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('INVALID_CODE');
+  });
+
+  it('POST /auth/reset-password → weak password → 400 VALIDATION_ERROR', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/reset-password',
+      payload: { email: 'user@test.com', code: '987654', newPassword: 'short' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });

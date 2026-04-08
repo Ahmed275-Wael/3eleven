@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionService, type SessionPayload } from '../../../src/security/session/session.service';
 import { setSessionCookie, clearSessionCookie } from '../../../src/security/session/session.cookie';
-import { requireAuth } from '../../../src/security/middleware/require-auth';
+import { requireAuth, setSessionServiceForAuth } from '../../../src/security/middleware/require-auth';
 
 // ---------------------------------------------------------------------------
 // Mock Redis factory
@@ -78,9 +78,16 @@ describe('MODULE 3.1 — Session Service (Unit)', () => {
     expect(result).toBeNull();
   });
 
-  it('destroySession(id) deletes the Redis key', async () => {
-    await service.destroySession('abc123');
+  it('destroySession(id) deletes the Redis key and returns true', async () => {
+    redis._store.set('session:abc123', '{}');
+    const result = await service.destroySession('abc123');
     expect(redis.del).toHaveBeenCalledWith('session:abc123');
+    expect(result).toBe(true);
+  });
+
+  it('destroySession(id) returns false when key does not exist', async () => {
+    const result = await service.destroySession('nonexistent');
+    expect(result).toBe(false);
   });
 
   it('rotateSession(id) → deletes old, creates new with same payload + fresh TTL', async () => {
@@ -192,6 +199,20 @@ describe('MODULE 3.2 — Session Cookie Helpers', () => {
 // MODULE 3.3 — requireAuth Middleware
 // ---------------------------------------------------------------------------
 describe('MODULE 3.3 — requireAuth Middleware', () => {
+  const validPayload: SessionPayload = {
+    userId: 'user-123',
+    username: 'testuser',
+    authMethod: 'password',
+  };
+
+  beforeEach(() => {
+    // Set up a SessionService with a mock Redis pre-loaded with a valid session
+    const mockRedis = createMockRedis();
+    mockRedis._store.set('session:valid-session-id', JSON.stringify(validPayload));
+    const sessionService = new SessionService(mockRedis as any);
+    setSessionServiceForAuth(sessionService);
+  });
+
   function createMockRequest(cookies: Record<string, string> = {}) {
     return {
       cookies,

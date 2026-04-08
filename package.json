@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --env-file=.env src/app.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node --env-file=.env dist/app.env dist/app.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run --project unit",
@@ -25,28 +25,28 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "fastify": "^4.28.x",
     "@fastify/cookie": "^9.x",
     "@fastify/rate-limit": "^9.x",
     "argon2": "^0.x",
-    "nodemailer": "^6.x",
-    "ioredis": "^5.x",
     "drizzle-orm": "^0.33.x",
+    "fastify": "^4.28.x",
+    "ioredis": "^5.x",
+    "nodemailer": "^6.x",
     "postgres": "^3.x",
-    "zod": "^3.x",
-    "tsx": "^4.x"
+    "tsx": "^4.x",
+    "zod": "^3.x"
   },
   "devDependencies": {
-    "typescript": "^5.x",
-    "vitest": "^2.x",
-    "@vitest/coverage-v8": "^2.x",
-    "testcontainers": "^10.x",
-    "playwright": "^1.x",
     "@playwright/test": "^1.x",
     "@types/node": "^20.x",
-    "@types/nodemailer": "^6.x",
-    "smtp-server": "^3.x",
+    "@types/nodemailer": "^6.4.23",
     "@types/smtp-server": "^3.x",
-    "drizzle-kit": "^0.24.x"
+    "@vitest/coverage-v8": "^2.x",
+    "drizzle-kit": "^0.24.x",
+    "playwright": "^1.x",
+    "smtp-server": "^3.x",
+    "testcontainers": "^10.x",
+    "typescript": "^5.x",
+    "vitest": "^2.x"
   }
 }

@@ -12,6 +12,11 @@ export async function generateResetCode(redis: Redis, email: string): Promise<st
   return code;
 }
 
+export async function peekResetCode(redis: Redis, email: string, code: string): Promise<boolean> {
+  const stored = await redis.get(`${KEY_PREFIX}${email}`);
+  return stored !== null && stored === code;
+}
+
 export async function consumeResetCode(redis: Redis, email: string, code: string): Promise<boolean> {
   const key = `${KEY_PREFIX}${email}`;
   const stored = await redis.get(key);
