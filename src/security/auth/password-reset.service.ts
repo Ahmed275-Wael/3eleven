@@ -3,6 +3,7 @@
 import type Redis from 'ioredis';
 import type { UsersRepository } from '../users/users.repository.js';
 import type { SessionService } from '../session/session.service.js';
+import type { SecurityEventsRepository } from '../risk/security-events.repository.js';
 import { generateResetCode, peekResetCode, consumeResetCode } from '../crypto/reset-code.js';
 import { hashPassword } from '../crypto/argon2.js';
 import { InvalidResetCodeError, ValidationError } from '../errors/index.js';
@@ -17,14 +18,27 @@ export class PasswordResetService {
     private readonly redis: Redis,
     private readonly sessionService: SessionService,
     private readonly emailSender: ResetEmailSender,
+    private readonly eventsRepo?: SecurityEventsRepository,
   ) {}
 
-  async requestReset(email: string): Promise<void> {
+  async requestReset(email: string, ip?: string): Promise<void> {
     const user = await this.usersRepo.findByEmail(email);
     if (!user) return; // silent — prevents enumeration
 
     const code = await generateResetCode(this.redis, email);
     await this.emailSender.sendResetCode(email, code);
+
+    // Log event (best-effort — after email is sent so user row is confirmed to exist)
+    try {
+      await this.eventsRepo?.logEvent({
+        userId: user.id,
+        type: 'PASSWORD_RESET_REQUESTED',
+        ip: ip ?? '0.0.0.0',
+        riskLevel: 'MEDIUM',
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   async verifyResetCode(email: string, code: string): Promise<void> {
@@ -32,7 +46,7 @@ export class PasswordResetService {
     if (!valid) throw new InvalidResetCodeError();
   }
 
-  async resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+  async resetPassword(email: string, code: string, newPassword: string, ip?: string): Promise<void> {
     // Validate new password BEFORE consuming the code
     if (newPassword.length < 8) {
       throw new ValidationError('Password must be at least 8 characters', ['password']);
@@ -46,6 +60,18 @@ export class PasswordResetService {
 
     const newHash = await hashPassword(newPassword);
     await this.usersRepo.updatePasswordHash(user.id, newHash);
+
+    // Log event (best-effort)
+    try {
+      await this.eventsRepo?.logEvent({
+        userId: user.id,
+        type: 'PASSWORD_RESET_COMPLETED',
+        ip: ip ?? '0.0.0.0',
+        riskLevel: 'HIGH',
+      });
+    } catch {
+      // best-effort
+    }
 
     // Destroy all sessions for this user
     const keys = await this.redis.keys('session:*');

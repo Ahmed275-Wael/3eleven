@@ -20,7 +20,21 @@ export interface AppConfig {
 }
 
 export async function buildApp(config?: AppConfig): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL ?? 'info',
+      redact: {
+        paths: [
+          'req.body.password',
+          'req.body.newPassword',
+          'req.body.code',
+          'req.headers.authorization',
+          'req.headers.cookie',
+        ],
+        censor: '[REDACTED]',
+      },
+    },
+  });
 
   // ── Cookie parser ──
   await app.register(cookie);

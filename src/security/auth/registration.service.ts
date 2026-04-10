@@ -2,6 +2,7 @@
 
 import type Redis from 'ioredis';
 import type { UsersRepository } from '../users/users.repository.js';
+import type { SecurityEventsRepository } from '../risk/security-events.repository.js';
 import { hashPassword } from '../crypto/argon2.js';
 import { generateCode } from '../crypto/verification-code.js';
 import { DuplicateUsernameError, DuplicateEmailError, ValidationError } from '../errors/index.js';
@@ -14,6 +15,7 @@ export interface RegisterInput {
   username: string;
   email: string;
   password: string;
+  ip?: string;
 }
 
 export interface RegisterResult {
@@ -29,6 +31,7 @@ export class RegistrationService {
     private readonly usersRepo: UsersRepository,
     private readonly redis: Redis,
     private readonly emailSender: EmailSender,
+    private readonly eventsRepo?: SecurityEventsRepository,
   ) {}
 
   async register(input: RegisterInput): Promise<RegisterResult> {
@@ -57,6 +60,19 @@ export class RegistrationService {
       email: input.email,
       passwordHash,
     });
+
+    // Log registration event (best-effort — must not fail the registration)
+    try {
+      await this.eventsRepo?.logEvent({
+        userId: user.id,
+        type: 'REGISTRATION_SUCCESS',
+        ip: input.ip ?? '0.0.0.0',
+        riskLevel: 'LOW',
+        metadata: { username: user.username },
+      });
+    } catch {
+      // best-effort — continue even if event logging fails
+    }
 
     // Send verification email (best-effort)
     try {
