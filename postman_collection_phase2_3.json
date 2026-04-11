@@ -1,0 +1,1526 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Lead Generation Platform — Phase 2 & 3",
+    "description": "Complete API collection for **Phase 2 — Leads CRM Engine** and **Phase 3 — Capture Engine**.\n\n---\n\n## Authentication\nAll endpoints require a session cookie (`Cookie: __session=<value>`) except:\n- `POST /capture/forms/:formId/submit` — fully public\n\nRun **🔐 Setup → 1. Register** then **🔐 Setup → 2. Login** to get a session. The Login request automatically saves the cookie to the `sessionCookie` variable.\n\n---\n\n## Collection Variables\n\n| Variable | Description | Auto-set by |\n|----------|-------------|-------------|\n| `baseUrl` | API base URL | _(set manually)_ |\n| `sessionCookie` | Full `__session=xxx` cookie string | Login |\n| `leadId` | Last created lead UUID | Capture Lead |\n| `formId` | Last created form UUID | Create Form |\n| `listId` | Last created list UUID | Create List |\n| `eventId` | Last created badge event UUID | Create Badge Event |\n| `attendeeId` | First attendee UUID from last upload | Upload Attendees |\n\n---\n\n## Example Flows\nSee the **⚡ Flows** folder for guided end-to-end sequences. Run each folder's requests top-to-bottom.\n\n---\n\n## Error Codes Reference\n\n| Code | HTTP | Meaning |\n|------|------|---------|\n| `LEAD_NOT_FOUND` | 404 | Lead ID doesn't exist or belongs to another user |\n| `DUPLICATE_LEAD` | 409 | Email already captured by this user |\n| `BLACKLISTED_LEAD` | 422 | Email/domain is on the user's blacklist |\n| `FORM_NOT_FOUND` | 404 | Form ID not found or wrong owner |\n| `ALREADY_SCANNED` | 409 | Badge attendee already scanned |\n| `INVALID_FORM_OPERATION` | 409 | Lifecycle transition not allowed (e.g. delete active form) |\n| `VALIDATION_ERROR` | 400 | Request body failed schema validation |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",        "value": "http://localhost:3000", "type": "default", "description": "Change to your server URL" },
+    { "key": "sessionCookie",  "value": "", "type": "default", "description": "Auto-set by the Login request" },
+    { "key": "leadId",         "value": "", "type": "default", "description": "Auto-set by Capture Lead" },
+    { "key": "formId",         "value": "", "type": "default", "description": "Auto-set by Create Form" },
+    { "key": "listId",         "value": "", "type": "default", "description": "Auto-set by Create List" },
+    { "key": "eventId",        "value": "", "type": "default", "description": "Auto-set by Create Badge Event" },
+    { "key": "attendeeId",     "value": "", "type": "default", "description": "Auto-set by Upload Attendees (first in array)" }
+  ],
+  "item": [
+
+    {
+      "name": "🔐 Setup — Authenticate",
+      "description": "⚠️ **Email verification is enforced.** Login returns `401 UNVERIFIED_EMAIL` if the account has not been verified.\n\nRun requests **1 → 2 → 3** in order:\n1. Register — creates the account and triggers a verification email\n2. Verify Email — submit the 6-digit code from the email → **this sets the session cookie** (you can skip step 3 after a fresh verify)\n3. Login — use for subsequent sessions after the cookie expires\n\nFor local dev, watch the server stdout for a line like:\n```\n[email-verification] code=847291 → demo@example.com\n```\nor point `SMTP_HOST` at Mailpit/MailHog to capture outbound mail.",
+      "item": [
+        {
+          "name": "1. Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"demouser\",\n  \"email\": \"demo@example.com\",\n  \"password\": \"SuperSecret99!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "Creates a new user account. Returns `201`:\n```json\n{\n  \"userId\": \"uuid\",\n  \"username\": \"demouser\",\n  \"message\": \"Verification code sent to your email\"\n}\n```\n\nA 6-digit verification code is immediately sent to the registered email. You **must** submit that code via **POST /auth/verify-email** before login is possible — attempting to log in before verification returns `401 UNVERIFIED_EMAIL`.\n\n**Rate limit:** 10 requests / minute per IP."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Verify Email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// verify-email creates a session immediately — capture the cookie here",
+                  "const cookieHeader = pm.response.headers.get('Set-Cookie');",
+                  "if (cookieHeader) {",
+                  "    const match = cookieHeader.match(/(__session=[^;]+)/);",
+                  "    if (match) {",
+                  "        pm.collectionVariables.set('sessionCookie', match[1]);",
+                  "        console.log('✅ sessionCookie saved from verify-email:', match[1].substring(0, 30) + '...');",
+                  "    }",
+                  "} else {",
+                  "    console.warn('⚠️  No Set-Cookie — wrong code or already verified');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@example.com\",\n  \"code\": \"847291\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-email",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "verify-email"]
+            },
+            "description": "Submits the 6-digit code from the verification email. Replace `847291` with the actual code.\n\n**On success (200):** the server immediately creates a session and sets the `__session` cookie — you are logged in and can skip step 3.\n\n**The Test script** auto-saves the cookie to `sessionCookie`.\n\n**Errors:**\n- `400 INVALID_CODE` — wrong or expired code\n- `404` — email not found\n\nCodes are single-use and expire after 15 minutes. Use **POST /auth/resend-verification** if the code expires."
+          },
+          "response": []
+        },
+        {
+          "name": "2b. Resend Verification Code",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/resend-verification",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "resend-verification"]
+            },
+            "description": "Sends a fresh 6-digit code if the original expired or was not received. Only needed if step 2 fails with an expired code error.\n\nReturns `200 { message: 'Verification code resent' }`."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extract the session cookie from the Set-Cookie response header",
+                  "const cookieHeader = pm.response.headers.get('Set-Cookie');",
+                  "if (cookieHeader) {",
+                  "    const match = cookieHeader.match(/(__session=[^;]+)/);",
+                  "    if (match) {",
+                  "        pm.collectionVariables.set('sessionCookie', match[1]);",
+                  "        console.log('✅ sessionCookie saved:', match[1].substring(0, 30) + '...');",
+                  "    }",
+                  "} else {",
+                  "    console.warn('⚠️  No Set-Cookie — check credentials, or account may not be verified yet (run step 2 first)');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"demouser\",\n  \"password\": \"SuperSecret99!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticates a **verified** account. On success the server sets an `HttpOnly` session cookie.\n\n⚠️ Returns `401 UNVERIFIED_EMAIL` if step 2 has not been completed.\n\nThe **Test** script auto-saves the cookie to `sessionCookie`. All subsequent authenticated requests send `Cookie: {{sessionCookie}}`.\n\n**Rate limit:** 5 requests / minute per IP."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "⚡ Flows",
+      "description": "Guided end-to-end sequences. Run each sub-folder top-to-bottom for a working demo. All flows assume you have already run 🔐 Setup.",
+      "item": [
+
+        {
+          "name": "Flow A — Manual Lead Journey",
+          "description": "Captures a lead manually, enriches it with a tag and a note, advances the status through the pipeline, then cleans up.\n\n1. Capture Lead → saves `leadId`\n2. Add Tag\n3. Move to _contacted_\n4. Add a note\n5. Inspect the full lead record\n6. Delete lead",
+          "item": [
+            {
+              "name": "A1 · Capture Lead",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('leadId', r.id); console.log('leadId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"sarah.chen@techcorp.io\",\n  \"firstName\": \"Sarah\",\n  \"lastName\": \"Chen\",\n  \"phone\": \"+1-415-555-0100\",\n  \"company\": \"TechCorp\",\n  \"jobTitle\": \"VP of Engineering\",\n  \"captureMethod\": \"manual\",\n  \"utmSource\": \"linkedin\",\n  \"utmCampaign\": \"spring-outreach-2026\",\n  \"qualificationScore\": 85,\n  \"qualificationAnswers\": {\n    \"budget\": \"$50k+\",\n    \"timeline\": \"Q3 2026\",\n    \"decisionMaker\": true\n  }\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "A2 · Add Tag (vip)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"tag\": \"vip\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/tags",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "tags"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "A3 · Move to Contacted",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"status\": \"contacted\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "A4 · Add Note",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"body\": \"Spoke with Sarah on 2026-04-12 — strong interest in the enterprise plan. Follow up after Q2 budget review.\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/notes",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "notes"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "A5 · Get Full Lead Record",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "A6 · Delete Lead",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Flow B — Form → Public Submit → Export",
+          "description": "Creates a lead capture form, publishes it, submits it as a public (anonymous) visitor, then exports all leads as CSV.\n\n1. Create Form → saves `formId`\n2. Publish Form (makes it live)\n3. Submit Form (public — no Cookie header)\n4. List Leads (confirm submission created a lead)\n5. Export CSV",
+          "item": [
+            {
+              "name": "B1 · Create Form",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('formId', r.id); console.log('formId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"SaaS Trial Request — Spring 2026\",\n  \"fields\": [\n    { \"type\": \"email\",   \"label\": \"Work Email\",    \"required\": true },\n    { \"type\": \"text\",    \"label\": \"First Name\",    \"required\": true },\n    { \"type\": \"text\",    \"label\": \"Last Name\",     \"required\": false },\n    { \"type\": \"text\",    \"label\": \"Company\",       \"required\": true },\n    { \"type\": \"dropdown\",\"label\": \"Team Size\",     \"options\": [\"1-10\",\"11-50\",\"51-200\",\"200+\"] }\n  ],\n  \"qualificationConfig\": {\n    \"budget\":      { \"question\": \"Estimated annual budget?\", \"weight\": 30 },\n    \"timeline\":    { \"question\": \"Implementation timeline?\", \"weight\": 20 },\n    \"useCase\":     { \"question\": \"Primary use case?\",         \"weight\": 50 }\n  },\n  \"redirectUrl\": \"https://example.com/thank-you\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms"]
+                },
+                "description": "Creates a new form in `draft` status. The `fields` array supports: `text`, `email`, `phone`, `company`, `dropdown`, `checkbox`, `file`.\n`qualificationConfig` is an optional map — each entry adds to the lead's `qualificationScore` when the form is submitted."
+              },
+              "response": []
+            },
+            {
+              "name": "B2 · Publish Form",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/publish",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "publish"]
+                },
+                "description": "Transitions the form from `draft` → `active`. After this the public submit endpoint is live. Returns the updated form object."
+              },
+              "response": []
+            },
+            {
+              "name": "B3 · Submit Form (Public — no auth)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('leadId', r.id); console.log('leadId from form submit =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"visitor@startup.io\",\n  \"firstName\": \"Jordan\",\n  \"lastName\": \"Blake\",\n  \"phone\": \"+44 20 7946 0001\",\n  \"company\": \"Startup.io\",\n  \"jobTitle\": \"CTO\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/submit",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "submit"]
+                },
+                "description": "⚠️ **This is the only public endpoint in the system — no Cookie header required.**\n\nThe server looks up the form by ID, validates it is `active`, creates a lead under the form owner's account, and atomically increments `submission_count` on the form.\n\nSending to a `draft` or `archived` form returns `404 FORM_NOT_FOUND`."
+              },
+              "response": []
+            },
+            {
+              "name": "B4 · List Leads (confirm submission)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads?captureMethod=form&limit=5",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"],
+                  "query": [
+                    { "key": "captureMethod", "value": "form" },
+                    { "key": "limit", "value": "5" }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "B5 · Export Leads as CSV",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/export",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "export"]
+                },
+                "description": "Returns `text/csv` with `Content-Disposition: attachment; filename=\"leads.csv\"`.\n\nColumns: `email, firstName, lastName, phone, company, jobTitle, status, captureMethod, capturedAt`"
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Flow C — Badge Event → Scan",
+          "description": "Creates a badge event (e.g. a conference), bulk-uploads the attendee list, then simulates scanning a badge to create a lead.\n\n1. Create Badge Event → saves `eventId`\n2. Upload Attendees → saves `attendeeId` (first attendee)\n3. Scan Badge → creates a lead, stamps `scanned_at` on the attendee row\n4. Get Event (verify scan)",
+          "item": [
+            {
+              "name": "C1 · Create Badge Event",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('eventId', r.id); console.log('eventId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"SaaS Connect 2026 — San Francisco\",\n  \"eventDate\": \"2026-06-18\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "C2 · Upload Attendees",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "// Response is { inserted: N } — run C2b next to fetch attendee IDs",
+                      "const r = pm.response.json();",
+                      "console.log('Attendees uploaded:', r.inserted);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"attendees\": [\n    {\n      \"email\": \"priya.sharma@globalai.com\",\n      \"firstName\": \"Priya\",\n      \"lastName\": \"Sharma\",\n      \"company\": \"GlobalAI\",\n      \"jobTitle\": \"Head of Product\"\n    },\n    {\n      \"email\": \"mike.okonkwo@fintech.ng\",\n      \"firstName\": \"Mike\",\n      \"lastName\": \"Okonkwo\",\n      \"company\": \"FintechNG\",\n      \"jobTitle\": \"Founder & CEO\"\n    },\n    {\n      \"email\": \"liu.wei@cloudops.cn\",\n      \"firstName\": \"Wei\",\n      \"lastName\": \"Liu\",\n      \"company\": \"CloudOps\",\n      \"jobTitle\": \"Platform Engineer\"\n    }\n  ]\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/attendees",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "attendees"]
+                },
+                "description": "Bulk-uploads the conference attendee list. Duplicate emails within the same event are silently skipped (`ON CONFLICT DO NOTHING`). Returns `{ inserted: N }` — run C2b next to fetch attendee IDs."
+              },
+              "response": []
+            },
+            {
+              "name": "C2b · Get Attendees (saves attendeeId)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (Array.isArray(r) && r.length > 0) {",
+                      "    pm.collectionVariables.set('attendeeId', r[0].id);",
+                      "    console.log('attendeeId =', r[0].id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/attendees",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "attendees"]
+                },
+                "description": "Fetches all attendees for the event. The Test script saves `r[0].id` as `attendeeId` — the first attendee (Priya Sharma) will be scanned in C3."
+              },
+              "response": []
+            },
+            {
+              "name": "C3 · Scan Badge (attendeeId)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.lead && r.lead.id) {",
+                      "    pm.collectionVariables.set('leadId', r.lead.id);",
+                      "    console.log('Lead created from scan — leadId =', r.lead.id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/scan/{{attendeeId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "scan", "{{attendeeId}}"]
+                },
+                "description": "Scans a badge. The server:\n1. Verifies you own the event\n2. Checks the attendee belongs to this event\n3. Guards against double-scan → `409 ALREADY_SCANNED`\n4. Creates a lead under your account with `captureMethod = 'badge_scan'`\n5. Stamps `scanned_at` + `lead_id` on the attendee row\n\nReturns `{ lead, attendee }`."
+              },
+              "response": []
+            },
+            {
+              "name": "C4 · Get Badge Event (verify attendee stamped)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}"]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Flow D — CSV Import",
+          "description": "Demonstrates all three CSV deduplication modes.\n\n1. Import with `skip` — first-time bulk import\n2. Import same file with `merge` — only non-empty new fields overwrite existing data\n3. Export all leads to CSV\n\n**CSV format for the file upload** (save as `leads.csv`):\n```\nemail,first_name,last_name,company,job_title\nalice@demo.com,Alice,Walker,DemoCo,Founder\nbob@demo.com,Bob,Martinez,BetaLabs,CTO\ncarol@demo.com,Carol,Kim,Gamma Inc,Head of Sales\n```\n\nThe `columnMap` query param tells the importer how your CSV headers map to internal field names.",
+          "item": [
+            {
+              "name": "D1 · Import CSV (skip mode)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": [],
+                      "description": "Select your CSV file. Expected headers: email, first_name, last_name, company, job_title"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/import?columnMap={\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}&dedupMode=skip",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "import"],
+                  "query": [
+                    {
+                      "key": "columnMap",
+                      "value": "{\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}",
+                      "description": "JSON map of internal field names to CSV column headers"
+                    },
+                    {
+                      "key": "dedupMode",
+                      "value": "skip",
+                      "description": "skip | overwrite | merge"
+                    }
+                  ]
+                },
+                "description": "Multipart file upload. Select a CSV file in Postman's `Body → form-data`.\n\n**Response:**\n```json\n{\n  \"imported\": 3,\n  \"skipped\": 0,\n  \"failed\": 0,\n  \"errors\": []\n}\n```\n\n**dedupMode=skip** — if a row's email is already captured, that row is counted as `skipped` and the existing lead is left unchanged."
+              },
+              "response": []
+            },
+            {
+              "name": "D2 · Import CSV (merge mode — re-import same file)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": [],
+                      "description": "Same or updated CSV file"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/import?columnMap={\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}&dedupMode=merge",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "import"],
+                  "query": [
+                    {
+                      "key": "columnMap",
+                      "value": "{\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}"
+                    },
+                    {
+                      "key": "dedupMode",
+                      "value": "merge",
+                      "description": "Only non-empty CSV fields overwrite existing lead data"
+                    }
+                  ]
+                },
+                "description": "**dedupMode=merge** — for every duplicate email, only _non-empty_ fields from the CSV row overwrite the existing lead. Empty CSV cells leave the existing value untouched.\n\nUseful for enrichment imports: add phone/company without wiping existing data."
+              },
+              "response": []
+            },
+            {
+              "name": "D3 · Export Leads as CSV",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/export",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "export"]
+                },
+                "description": "Returns the full lead database as a CSV download (up to 10,000 rows).\n\n**Headers:** `email, firstName, lastName, phone, company, jobTitle, status, captureMethod, capturedAt`"
+              },
+              "response": []
+            }
+          ]
+        }
+
+      ]
+    },
+
+    {
+      "name": "Phase 2 — Leads CRM",
+      "description": "All endpoints are under the `/leads` prefix and require an authenticated session cookie.",
+      "item": [
+
+        {
+          "name": "Blacklist",
+          "description": "Manage email and domain blocklist. Any capture attempt (form submit, badge scan, CSV import, manual capture) against a blacklisted email or any email on a blacklisted domain returns `422 BLACKLISTED_LEAD`.",
+          "item": [
+            {
+              "name": "Add Email to Blacklist",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.value) pm.collectionVariables.set('blacklistValue', encodeURIComponent(r.value));"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"value\": \"noreply@spamcorp.com\",\n  \"type\": \"email\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/blacklist",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "blacklist"]
+                },
+                "description": "Blacklists a specific email address. Returns `201` with the created entry.\n\n`type` must be `\"email\"` or `\"domain\"`."
+              },
+              "response": []
+            },
+            {
+              "name": "Add Domain to Blacklist",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"value\": \"spamcorp.io\",\n  \"type\": \"domain\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/blacklist",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "blacklist"]
+                },
+                "description": "Blacklists an entire domain. Any email `@spamcorp.io` will be rejected at capture time."
+              },
+              "response": []
+            },
+            {
+              "name": "List Blacklist Entries",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/blacklist",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "blacklist"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Remove Blacklist Entry",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/blacklist/noreply@spamcorp.com",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "blacklist", "noreply@spamcorp.com"]
+                },
+                "description": "URL-encode the value if it contains special characters (e.g. `@`).\nReturns `204 No Content` on success."
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Lists (Segments)",
+          "description": "Static lead lists — named segments you can bulk-populate and use for targeted outreach. Lists are independent of lead status/tags.",
+          "item": [
+            {
+              "name": "Get All Lists",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/lists",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "lists"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create List",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('listId', r.id); console.log('listId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"name\": \"Enterprise Prospects — Q3 2026\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/lists",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "lists"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Add Members to List",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"leadIds\": [\n    \"{{leadId}}\"\n  ]\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/lists/{{listId}}/members",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "lists", "{{listId}}", "members"]
+                },
+                "description": "Bulk-adds leads to a list. All `leadIds` must belong to your account. Returns `{ ok: true }` on success.\n\nYou can pass multiple UUIDs: `\"leadIds\": [\"uuid1\", \"uuid2\", \"uuid3\"]`"
+              },
+              "response": []
+            },
+            {
+              "name": "Delete List",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/lists/{{listId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "lists", "{{listId}}"]
+                },
+                "description": "Deletes the list and cascade-removes all list memberships. The leads themselves are NOT deleted. Returns `204 No Content`."
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Leads",
+          "description": "Core lead CRUD. Every operation is scoped to the authenticated user — you cannot read or modify another user's leads.",
+          "item": [
+            {
+              "name": "Capture Lead — Full",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('leadId', r.id); console.log('leadId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"alexis.dupont@enterprise.fr\",\n  \"firstName\": \"Alexis\",\n  \"lastName\": \"Dupont\",\n  \"phone\": \"+33 1 42 00 00 00\",\n  \"company\": \"Enterprise FR\",\n  \"jobTitle\": \"Chief Digital Officer\",\n  \"captureMethod\": \"manual\",\n  \"captureSourceId\": \"trade-show-berlin-2026\",\n  \"utmSource\": \"tradeshow\",\n  \"utmMedium\": \"offline\",\n  \"utmCampaign\": \"emea-q2-2026\",\n  \"utmContent\": \"booth-scan\",\n  \"qualificationScore\": 90,\n  \"qualificationAnswers\": {\n    \"budget\": \"€100k+\",\n    \"timeline\": \"Q4 2026\",\n    \"painPoint\": \"Manual lead management\",\n    \"decisionMaker\": true\n  }\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"]
+                },
+                "description": "Creates a lead with all optional fields populated. Returns `201` with the full lead object.\n\n**Status pipeline:** `new → contacted → qualified → meeting_booked → won → lost` (default is `new`)\n\n**Returns `409 DUPLICATE_LEAD`** if this email is already captured by your account."
+              },
+              "response": []
+            },
+            {
+              "name": "Capture Lead — Minimal (email only)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"email\": \"minimal@example.com\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"]
+                },
+                "description": "Only `email` is required. All other fields are optional and default to `null`."
+              },
+              "response": []
+            },
+            {
+              "name": "List Leads",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads?limit=20&offset=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"],
+                  "query": [
+                    { "key": "status",        "value": "new",     "description": "Filter: new | contacted | qualified | meeting_booked | won | lost", "disabled": true },
+                    { "key": "captureMethod", "value": "form",    "description": "Filter: form | badge_scan | csv | manual | ...", "disabled": true },
+                    { "key": "limit",         "value": "20",      "description": "Page size (default: 50)" },
+                    { "key": "offset",        "value": "0",       "description": "Pagination offset" }
+                  ]
+                },
+                "description": "Returns `{ leads: Lead[], total: number }`. Use `status` and `captureMethod` query params to filter. Disabled params are shown as examples — enable them to filter."
+              },
+              "response": []
+            },
+            {
+              "name": "List Leads — Filtered by Status",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads?status=qualified&limit=50&offset=0",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads"],
+                  "query": [
+                    { "key": "status",  "value": "qualified" },
+                    { "key": "limit",   "value": "50" },
+                    { "key": "offset",  "value": "0" }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Lead",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update Lead",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"firstName\": \"Alex\",\n  \"company\": \"Enterprise FR (Updated)\",\n  \"jobTitle\": \"CEO\",\n  \"status\": \"qualified\",\n  \"qualificationScore\": 95\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                },
+                "description": "Partial update — only send fields you want to change. The `email` field is **immutable** (not accepted here). `status` must be one of: `new | contacted | qualified | meeting_booked | won | lost`."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete Lead",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}"]
+                },
+                "description": "Hard delete. Cascades to tags, notes, and list memberships. Returns `204 No Content`."
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Tags",
+          "description": "Per-lead tags. Operations are idempotent — adding an existing tag is a no-op.",
+          "item": [
+            {
+              "name": "Add Tag",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"tag\": \"enterprise\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/tags",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "tags"]
+                },
+                "description": "Adds a tag to the lead. Returns `{ ok: true }`. Adding a tag that already exists is silently idempotent."
+              },
+              "response": []
+            },
+            {
+              "name": "Remove Tag",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/tags/enterprise",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "tags", "enterprise"]
+                },
+                "description": "Removes the tag from the lead. Returns `204 No Content`. Replace `enterprise` in the URL with the actual tag value."
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Notes",
+          "description": "Free-form text notes attached to a lead. Notes are append-only and ordered by creation time.",
+          "item": [
+            {
+              "name": "Get Notes",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/notes",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "notes"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Add Note",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ \"body\": \"Discovery call completed 2026-04-12. Strong fit for the Enterprise plan — follows up in 2 weeks after internal review with CFO.\" }",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/leads/{{leadId}}/notes",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["leads", "{{leadId}}", "notes"]
+                },
+                "description": "Appends a note to the lead. Returns `201` with the created note object including `id`, `body`, `createdAt`, `createdBy`."
+              },
+              "response": []
+            }
+          ]
+        }
+
+      ]
+    },
+
+    {
+      "name": "Phase 3 — Capture Engine",
+      "description": "All endpoints are under the `/capture` prefix. The only unauthenticated endpoint is `POST /capture/forms/:formId/submit`.",
+      "item": [
+
+        {
+          "name": "Forms",
+          "description": "Form lifecycle: `draft → active → archived`. You can only delete a `draft` form. Publishing makes the public submit endpoint live.",
+          "item": [
+            {
+              "name": "Create Form",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('formId', r.id); console.log('formId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Product Waitlist Sign-up\",\n  \"fields\": [\n    { \"type\": \"email\",   \"label\": \"Work Email\", \"required\": true },\n    { \"type\": \"text\",    \"label\": \"Full Name\",   \"required\": true },\n    { \"type\": \"text\",    \"label\": \"Company\",     \"required\": false },\n    { \"type\": \"dropdown\",\"label\": \"Role\",        \"options\": [\"Engineer\",\"Product\",\"Sales\",\"Other\"] }\n  ],\n  \"qualificationConfig\": {\n    \"teamSize\": { \"question\": \"How large is your team?\",     \"weight\": 25 },\n    \"budget\":   { \"question\": \"Annual software budget?\",     \"weight\": 50 },\n    \"timeline\": { \"question\": \"When do you need a solution?\",\"weight\": 25 }\n  },\n  \"redirectUrl\": \"https://example.com/waitlist-confirmed\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms"]
+                },
+                "description": "Creates a form in `draft` status. The `name` field is trimmed and required. `fields` is a free-form JSONB array — the backend stores whatever field definitions you provide.\n\nReturns `201` with the full form object including `id`, `status: 'draft'`, `submissionCount: 0`."
+              },
+              "response": []
+            },
+            {
+              "name": "List Forms",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms"],
+                  "query": [
+                    { "key": "status", "value": "active", "description": "Filter: draft | active | archived", "disabled": true }
+                  ]
+                },
+                "description": "Returns all forms for the authenticated user. Optionally filter by `?status=draft|active|archived`."
+              },
+              "response": []
+            },
+            {
+              "name": "Get Form",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update Form",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Product Waitlist Sign-up (Updated)\",\n  \"redirectUrl\": \"https://example.com/thank-you-v2\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}"]
+                },
+                "description": "Partial update. Send only fields to change. All fields are optional."
+              },
+              "response": []
+            },
+            {
+              "name": "Publish Form",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/publish",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "publish"]
+                },
+                "description": "Transitions `draft → active`. After this, `POST /capture/forms/:formId/submit` is live for anonymous visitors.\n\nReturns the updated form object with `status: 'active'`."
+              },
+              "response": []
+            },
+            {
+              "name": "Archive Form",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/archive",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "archive"]
+                },
+                "description": "Archives a form (any status → `archived`). The public submit endpoint will immediately return `404` after archiving. Data is preserved."
+              },
+              "response": []
+            },
+            {
+              "name": "Delete Form",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}"]
+                },
+                "description": "Deletes the form. Only allowed on `draft` forms — attempting to delete an `active` form returns `409 INVALID_FORM_OPERATION`.\n\nReturns `204 No Content`."
+              },
+              "response": []
+            },
+            {
+              "name": "Get QR Code",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Cookie", "value": "{{sessionCookie}}" },
+                  { "key": "x-base-url", "value": "https://app.example.com", "description": "The public-facing base URL. The QR encodes: {baseUrl}/f/{formId}" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/qr",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "qr"]
+                },
+                "description": "Returns a PNG QR code as a Base64 data URL.\n\n**Response:**\n```json\n{ \"qrCode\": \"data:image/png;base64,iVBORw0KGgo...\" }\n```\n\nThe QR encodes `{x-base-url}/f/{formId}`. Set the `x-base-url` header to your public domain. Defaults to `https://app.example.com` if omitted.\n\nPaste the `qrCode` value into an `<img src=\"...\">` tag or use it directly in a PDF/print template."
+              },
+              "response": []
+            },
+            {
+              "name": "Submit Form (Public — no auth)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"newlead@example.com\",\n  \"firstName\": \"Sam\",\n  \"lastName\": \"Rivera\",\n  \"phone\": \"+1-212-555-0199\",\n  \"company\": \"Cloudify Inc.\",\n  \"jobTitle\": \"Head of Infrastructure\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/forms/{{formId}}/submit",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "forms", "{{formId}}", "submit"]
+                },
+                "description": "⚠️ **No session cookie required.**\n\nThis endpoint is intended for anonymous website visitors submitting an embedded form. The server resolves the form owner from the form record — the submitter never provides a `userId`.\n\n**Errors:**\n- `404 FORM_NOT_FOUND` — form is `draft` or `archived`\n- `422 BLACKLISTED_LEAD` — the email is on the form owner's blacklist\n- `409 DUPLICATE_LEAD` — email already captured by the form owner"
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "Badge Events",
+          "description": "Model conference / trade show badge scanning. Create an event, bulk-upload the attendee list, then scan badges on the show floor to instantly create qualified leads.",
+          "item": [
+            {
+              "name": "Create Badge Event",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.id) { pm.collectionVariables.set('eventId', r.id); console.log('eventId =', r.id); }"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"B2B Summit — Amsterdam 2026\",\n  \"eventDate\": \"2026-09-15\"\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List Badge Events",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Badge Event",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Upload Attendees",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (Array.isArray(r) && r.length > 0) {",
+                      "    pm.collectionVariables.set('attendeeId', r[0].id);",
+                      "    console.log('attendeeId =', r[0].id, '(' + r.length + ' total attendees)');",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Cookie", "value": "{{sessionCookie}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"attendees\": [\n    {\n      \"email\": \"anna.kowalski@tech.pl\",\n      \"firstName\": \"Anna\",\n      \"lastName\": \"Kowalski\",\n      \"company\": \"TechPL\",\n      \"jobTitle\": \"Engineering Manager\"\n    },\n    {\n      \"email\": \"david.osei@afroinvest.com\",\n      \"firstName\": \"David\",\n      \"lastName\": \"Osei\",\n      \"company\": \"AfroInvest\",\n      \"jobTitle\": \"Head of Technology\"\n    },\n    {\n      \"email\": \"fatima.al-sayed@menatech.ae\",\n      \"firstName\": \"Fatima\",\n      \"lastName\": \"Al-Sayed\",\n      \"company\": \"MENA Tech\",\n      \"jobTitle\": \"Chief Product Officer\"\n    },\n    {\n      \"email\": \"luca.ferrari@startupitaly.it\",\n      \"firstName\": \"Luca\",\n      \"lastName\": \"Ferrari\",\n      \"company\": \"Startup Italy\",\n      \"jobTitle\": \"Co-Founder\"\n    }\n  ]\n}",
+                  "options": { "raw": { "language": "json" } }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/attendees",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "attendees"]
+                },
+                "description": "Bulk-creates attendee records for the event. Duplicate emails within the same event are silently skipped.\n\nReturns `201` with the array of created attendees. The test script saves `r[0].id` to `attendeeId` for use in the Scan Badge request."
+              },
+              "response": []
+            },
+            {
+              "name": "List Attendees",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/attendees",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "attendees"]
+                },
+                "description": "Returns all attendees for the event, ordered by upload order (ASC). Scanned attendees will have `scannedAt` and `leadId` populated."
+              },
+              "response": []
+            },
+            {
+              "name": "Scan Badge",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const r = pm.response.json();",
+                      "if (r.lead && r.lead.id) {",
+                      "    pm.collectionVariables.set('leadId', r.lead.id);",
+                      "    console.log('Lead created from badge scan — leadId =', r.lead.id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}/scan/{{attendeeId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}", "scan", "{{attendeeId}}"]
+                },
+                "description": "Scans a badge. The server executes atomically:\n1. Verify you own this event\n2. Verify the attendee belongs to this event\n3. Guard against double-scan → `409 ALREADY_SCANNED`\n4. Create a lead: `captureMethod = 'badge_scan'`, `captureSourceId = eventId`\n5. Stamp `scanned_at + lead_id` on the attendee row\n\n**Response:**\n```json\n{\n  \"lead\": { \"id\": \"uuid\", \"email\": \"...\", \"captureMethod\": \"badge_scan\", ... },\n  \"attendee\": { \"id\": \"uuid\", \"scannedAt\": \"2026-04-12T...\", \"leadId\": \"uuid\", ... }\n}\n```"
+              },
+              "response": []
+            },
+            {
+              "name": "Delete Badge Event",
+              "request": {
+                "method": "DELETE",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/badge-events/{{eventId}}",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "badge-events", "{{eventId}}"]
+                },
+                "description": "Deletes the event and cascade-removes all attendee records. The leads created from badge scans are **not** deleted. Returns `204 No Content`."
+              },
+              "response": []
+            }
+          ]
+        },
+
+        {
+          "name": "CSV Import / Export",
+          "description": "Bulk import leads from a CSV file with configurable column mapping and deduplication. Export all leads as a downloadable CSV.",
+          "item": [
+            {
+              "name": "Import Leads — Skip Mode",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": [],
+                      "description": "CSV file. Prepare a file with headers matching your columnMap below.\n\nExample content:\nemail,first_name,last_name,company,job_title\njane@example.com,Jane,Doe,Acme Corp,VP Sales\njohn@example.com,John,Smith,BetaTech,CTO"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/import?columnMap={\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}&dedupMode=skip",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "import"],
+                  "query": [
+                    {
+                      "key": "columnMap",
+                      "value": "{\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\"}",
+                      "description": "JSON object. Keys = internal field names, values = CSV header names.\nAvailable internal fields: email, firstName, lastName, phone, company, jobTitle"
+                    },
+                    {
+                      "key": "dedupMode",
+                      "value": "skip",
+                      "description": "skip | overwrite | merge"
+                    }
+                  ]
+                },
+                "description": "**Multipart file upload.** In Postman: Body tab → form-data → add key `file` (type = File) → select your CSV.\n\n**dedupMode options:**\n- `skip` — existing emails are counted as `skipped`, no changes made\n- `overwrite` — all fields from CSV row replace the existing lead\n- `merge` — only non-empty CSV fields overwrite; blank cells leave existing data\n\n**Response:**\n```json\n{\n  \"imported\": 45,\n  \"skipped\":  3,\n  \"failed\":   1,\n  \"errors\": [\n    { \"row\": 12, \"email\": \"bad@@email\", \"error\": \"Invalid email\" }\n  ]\n}\n```\n\nBlacklisted emails are counted as **skipped** (not failed)."
+              },
+              "response": []
+            },
+            {
+              "name": "Import Leads — Overwrite Mode",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/import?columnMap={\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\",\"phone\":\"phone\"}&dedupMode=overwrite",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "import"],
+                  "query": [
+                    {
+                      "key": "columnMap",
+                      "value": "{\"email\":\"email\",\"firstName\":\"first_name\",\"lastName\":\"last_name\",\"company\":\"company\",\"jobTitle\":\"job_title\",\"phone\":\"phone\"}"
+                    },
+                    {
+                      "key": "dedupMode",
+                      "value": "overwrite"
+                    }
+                  ]
+                },
+                "description": "**dedupMode=overwrite** — for duplicate emails, ALL fields from the CSV row replace the existing lead record. Use when you have a complete, authoritative updated export from another system."
+              },
+              "response": []
+            },
+            {
+              "name": "Import Leads — Merge Mode",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "file",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/import?columnMap={\"email\":\"email\",\"phone\":\"phone\",\"company\":\"company\"}&dedupMode=merge",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "import"],
+                  "query": [
+                    {
+                      "key": "columnMap",
+                      "value": "{\"email\":\"email\",\"phone\":\"phone\",\"company\":\"company\"}"
+                    },
+                    {
+                      "key": "dedupMode",
+                      "value": "merge"
+                    }
+                  ]
+                },
+                "description": "**dedupMode=merge** — for duplicate emails, only non-empty CSV fields are written. This is ideal for enrichment imports: add phone numbers to existing leads without wiping their names, status, or tags.\n\nThe `columnMap` here only maps `phone` and `company` — only those fields will be updated on matches."
+              },
+              "response": []
+            },
+            {
+              "name": "Export Leads as CSV",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Cookie", "value": "{{sessionCookie}}" }],
+                "url": {
+                  "raw": "{{baseUrl}}/capture/leads/export",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["capture", "leads", "export"]
+                },
+                "description": "Downloads all leads as a CSV file. Postman will show the raw CSV body — click **Save Response** to download the file.\n\n**Response headers:**\n```\nContent-Type: text/csv; charset=utf-8\nContent-Disposition: attachment; filename=\"leads.csv\"\n```\n\n**CSV columns (always in this order):**\n```\nemail, firstName, lastName, phone, company, jobTitle, status, captureMethod, capturedAt\n```\n\nUp to 10,000 rows per export."
+              },
+              "response": []
+            }
+          ]
+        }
+
+      ]
+    }
+
+  ]
+}
